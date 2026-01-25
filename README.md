@@ -1,36 +1,216 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PressClipper
 
-## Getting Started
+A media monitoring SaaS application that allows users to track press coverage for their clients using Google Alerts RSS feeds.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **User Authentication**: Sign up and log in with Supabase Auth
+- **Client Management**: Create and manage multiple clients
+- **Google Alerts Integration**: Add RSS feed URLs from Google Alerts per client
+- **Async Processing**: Click "Refresh Now" to trigger a Gumloop automation run
+- **Coverage Feed**: View articles with filters (date range, relevance score, search text)
+
+## Tech Stack
+
+- **Framework**: Next.js 14 (App Router) + TypeScript
+- **Styling**: TailwindCSS
+- **Backend**: Supabase (Auth + PostgreSQL)
+- **Queue**: Database-backed queue with Node worker script
+- **Automation**: Gumloop API
+
+## Environment Variables
+
+Create a `.env.local` file in the root directory:
+
+```env
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+
+# Gumloop
+GUMLOOP_ENDPOINT=https://api.gumloop.com/api/v1/start_pipeline
+GUMLOOP_API_KEY=your_gumloop_api_key
+GUMLOOP_USER_ID=your_gumloop_user_id
+GUMLOOP_SAVED_ITEM_ID=your_gumloop_saved_item_id
+
+# App
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Security Notes
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `NEXT_PUBLIC_*` variables are exposed to the browser
+- `SUPABASE_SERVICE_ROLE_KEY` and `GUMLOOP_API_KEY` are **server-side only**
+- Never commit `.env.local` to version control
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Database Setup
 
-## Learn More
+### 1. Create a Supabase Project
 
-To learn more about Next.js, take a look at the following resources:
+1. Go to [supabase.com](https://supabase.com) and create a new project
+2. Copy your project URL and keys from Settings > API
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 2. Run the Database Migration
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Go to your Supabase Dashboard > SQL Editor
+2. Copy the contents of `supabase/migrations/001_initial_schema.sql`
+3. Run the SQL to create all tables, indexes, and RLS policies
 
-## Deploy on Vercel
+The migration will:
+- Create tables: `organizations`, `memberships`, `clients`, `alerts`, `runs`, `articles`
+- Set up Row Level Security policies
+- Create a trigger to auto-create an organization when a user signs up
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Local Development
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Prerequisites
+
+- Node.js 18+
+- npm or pnpm
+
+### Installation
+
+```bash
+# Install dependencies
+npm install
+
+# Start the development server
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### Running the Worker
+
+The worker processes queued runs in the background:
+
+```bash
+# In a separate terminal
+npm run worker
+```
+
+The worker:
+- Polls for queued runs every 5 seconds
+- Calls the Gumloop API with alert RSS URLs
+- Upserts articles to the database
+- Marks runs as SUCCESS or FAILED
+
+## API Routes
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/clients` | List all clients |
+| POST | `/api/clients` | Create a new client |
+| GET | `/api/clients/:id` | Get client details |
+| DELETE | `/api/clients/:id` | Delete a client |
+| POST | `/api/clients/:id/alerts` | Add an RSS feed |
+| DELETE | `/api/clients/:id/alerts?alertId=` | Delete an RSS feed |
+| POST | `/api/clients/:id/refresh` | Queue a new run |
+| GET | `/api/clients/:id/coverage` | Get articles with filters |
+| GET | `/api/runs/:runId` | Get run status |
+
+### Coverage Query Parameters
+
+- `from` - Start date (ISO 8601)
+- `to` - End date (ISO 8601)
+- `q` - Search text (searches title, outlet, snippet)
+- `minScore` - Minimum relevance score (0-100)
+- `limit` - Number of results (default: 50)
+- `offset` - Pagination offset
+
+## Gumloop Integration
+
+### Request Format (sent to Gumloop)
+
+```json
+{
+  "org_id": "uuid",
+  "client_id": "uuid",
+  "alerts": [
+    { "alert_id": "uuid", "rss_url": "https://..." }
+  ],
+  "since_ts": "2024-01-01T00:00:00Z"
+}
+```
+
+### Expected Response (from Gumloop)
+
+```json
+{
+  "results": [
+    {
+      "url": "https://example.com/article",
+      "canonical_url": "https://example.com/article",
+      "title": "Article Title",
+      "outlet": "News Outlet",
+      "published_at": "2024-01-01T00:00:00Z",
+      "snippet": "Article snippet...",
+      "summary": "AI-generated summary...",
+      "relevance_score": 85,
+      "importance_score": 70,
+      "labels": ["technology", "press release"]
+    }
+  ]
+}
+```
+
+## Project Structure
+
+```
+├── src/
+│   ├── app/
+│   │   ├── (app)/            # Protected app routes
+│   │   │   ├── clients/      # Client pages
+│   │   │   ├── dashboard/    # Dashboard page
+│   │   │   └── layout.tsx    # Forces dynamic rendering
+│   │   ├── (auth)/           # Auth routes
+│   │   │   ├── login/        # Login page
+│   │   │   └── layout.tsx    # Forces dynamic rendering
+│   │   ├── api/              # API routes
+│   │   ├── globals.css       # Global styles
+│   │   ├── layout.tsx        # Root layout
+│   │   └── page.tsx          # Home (redirect)
+│   ├── components/
+│   │   ├── layout/           # Layout components (Navbar)
+│   │   └── ui/               # UI components (Button, Input, Card, Badge)
+│   ├── lib/
+│   │   ├── supabase/         # Supabase clients (client, server, middleware)
+│   │   ├── auth.ts           # Auth helpers (getUserAndOrg, verifyClientAccess)
+│   │   ├── types.ts          # TypeScript types
+│   │   └── utils.ts          # Utility functions
+│   └── middleware.ts         # Next.js middleware for auth
+├── worker/
+│   └── index.ts              # Background worker script
+├── supabase/
+│   └── migrations/           # SQL migrations
+└── package.json
+```
+
+## Production Deployment
+
+### Next.js App
+
+Deploy to Vercel, Netlify, or any Node.js hosting:
+
+```bash
+npm run build
+npm start
+```
+
+### Worker
+
+The worker should run as a separate process. Options:
+- Run on a VPS with PM2 or systemd
+- Use a serverless function with a cron trigger
+- Deploy to Railway, Render, or Fly.io
+
+Example PM2 configuration:
+
+```bash
+pm2 start "npm run worker" --name pressclipper-worker
+```
+
+## License
+
+MIT
