@@ -179,7 +179,9 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
       const data = await res.json()
       setCurrentRunId(data.run_id)
-      fetchClient()
+      await fetchClient()
+      await fetchCoverage()
+      setRefreshing(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
       setRefreshing(false)

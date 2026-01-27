@@ -1,7 +1,13 @@
 import * as dotenv from 'dotenv'
 import * as path from 'path'
 import { createClient } from '@supabase/supabase-js'
-import { fetchCoverage, type CoverageArticle } from './coverage'
+import { fetchCoverage } from './coverage'
+import {
+  getClientWithAlerts,
+  computeSinceTs,
+  upsertArticles,
+  updateAlertsChecked
+} from './run'
 
 // Load .env.local file
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') })
@@ -20,37 +26,6 @@ const supabase = createClient(
     }
   }
 )
-
-// Types
-interface Alert {
-  id: string
-  query: string
-  label: string | null
-  last_checked_at: string | null
-}
-
-// Strip tracking parameters from URL
-function canonicalizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url)
-    const trackingParams = [
-      'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
-      'gclid', 'fbclid', 'msclkid', 'mc_eid', 'yclid', 'ref', '_ga'
-    ]
-
-    trackingParams.forEach(param => {
-      parsed.searchParams.delete(param)
-    })
-
-    if (parsed.hash && parsed.hash.includes('=')) {
-      parsed.hash = ''
-    }
-
-    return parsed.toString()
-  } catch {
-    return url
-  }
-}
 
 // Get the next queued run
 async function getNextQueuedRun() {
@@ -95,94 +70,12 @@ async function markCompleted(runId: string, status: 'SUCCESS' | 'FAILED', errorM
     .eq('id', runId)
 }
 
-// Get client and alerts
-async function getClientWithAlerts(clientId: string) {
-  const { data: client, error: clientError } = await supabase
-    .from('clients')
-    .select('*')
-    .eq('id', clientId)
-    .single()
-
-  if (clientError || !client) {
-    throw new Error(`Client not found: ${clientId}`)
-  }
-
-  const { data: alerts, error: alertsError } = await supabase
-    .from('alerts')
-    .select('*')
-    .eq('client_id', clientId)
-    .eq('active', true)
-
-  if (alertsError) {
-    throw new Error(`Failed to fetch alerts: ${alertsError.message}`)
-  }
-
-  return { client, alerts: alerts || [] }
-}
-
-// Upsert articles
-async function upsertArticles(
-  orgId: string,
-  clientId: string,
-  results: CoverageArticle[]
-) {
-  if (results.length === 0) {
-    console.log('[Worker] No articles to upsert')
-    return
-  }
-
-  const articles = results.map(r => ({
-    org_id: orgId,
-    client_id: clientId,
-    url: r.url,
-    canonical_url: r.canonical_url || canonicalizeUrl(r.url),
-    title: r.title || null,
-    outlet: r.outlet || null,
-    published_at: r.published_at || null,
-    snippet: r.snippet || null,
-    summary: r.summary || null,
-    relevance_score: r.relevance_score || 0,
-    importance_score: r.importance_score || 0,
-    labels: r.labels || []
-  }))
-
-  // Upsert using the unique constraint on (client_id, canonical_url)
-  const { error } = await supabase
-    .from('articles')
-    .upsert(articles, {
-      onConflict: 'client_id,canonical_url',
-      ignoreDuplicates: false
-    })
-
-  if (error) {
-    console.error('[Worker] Failed to upsert articles:', error)
-    throw error
-  }
-
-  console.log(`[Worker] Upserted ${articles.length} articles`)
-}
-
-// Update alerts' last_checked_at
-async function updateAlertsChecked(alertIds: string[]) {
-  if (alertIds.length === 0) return
-
-  const { error } = await supabase
-    .from('alerts')
-    .update({ last_checked_at: new Date().toISOString() })
-    .in('id', alertIds)
-
-  if (error) {
-    console.error('[Worker] Failed to update alerts:', error)
-  }
-}
-
 // Process a single run
 async function processRun(run: any) {
   console.log(`[Worker] Processing run ${run.id} for client ${run.client_id}`)
 
   try {
-    // Get client and alerts
-    const { client, alerts } = await getClientWithAlerts(run.client_id)
+    const { client, alerts } = await getClientWithAlerts(supabase, run.client_id)
 
     if (alerts.length === 0) {
       console.log('[Worker] No active alerts for client, marking as success')
@@ -190,27 +83,15 @@ async function processRun(run: any) {
       return
     }
 
-    // Calculate since_ts: newest last_checked_at or 24h ago
-    const lastCheckedDates = alerts
-      .filter(a => a.last_checked_at)
-      .map(a => new Date(a.last_checked_at!).getTime())
-
-    let sinceTs: string
-    if (lastCheckedDates.length > 0) {
-      sinceTs = new Date(Math.max(...lastCheckedDates)).toISOString()
-    } else {
-      sinceTs = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-    }
-
+    const sinceTs = computeSinceTs(alerts)
     console.log(`[Worker] Using since_ts: ${sinceTs}`)
 
     const results = await fetchCoverage(run.org_id, run.client_id, alerts, sinceTs)
 
-    // Upsert articles
-    await upsertArticles(run.org_id, run.client_id, results)
+    await upsertArticles(supabase, run.org_id, run.client_id, results)
+    console.log(`[Worker] Upserted ${results.length} articles`)
 
-    // Update alerts
-    await updateAlertsChecked(alerts.map(a => a.id))
+    await updateAlertsChecked(supabase, alerts.map(a => a.id))
 
     // Mark success
     await markCompleted(run.id, 'SUCCESS')
