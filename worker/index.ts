@@ -137,7 +137,7 @@ function validateEnv() {
   const required = [
     'NEXT_PUBLIC_SUPABASE_URL',
     'SUPABASE_SERVICE_ROLE_KEY',
-    'SERPER_KEY'
+    'SERPAPI_KEY'
   ]
 
   const missing = required.filter(key => !process.env[key])

@@ -34,6 +34,9 @@ GUMLOOP_API_KEY=your_gumloop_api_key
 GUMLOOP_USER_ID=your_gumloop_user_id
 GUMLOOP_SAVED_ITEM_ID=your_gumloop_saved_item_id
 
+# SerpApi (coverage pipeline – used by worker and refresh; replaces the previous Serper pipeline)
+SERPAPI_KEY=your_serpapi_api_key
+
 # App
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
@@ -41,7 +44,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 ### Security Notes
 
 - `NEXT_PUBLIC_*` variables are exposed to the browser
-- `SUPABASE_SERVICE_ROLE_KEY` and `GUMLOOP_API_KEY` are **server-side only**
+- `SUPABASE_SERVICE_ROLE_KEY`, `GUMLOOP_API_KEY`, and `SERPAPI_KEY` are **server-side only**
 - Never commit `.env.local` to version control
 
 ## Database Setup
@@ -92,9 +95,11 @@ npm run worker
 
 The worker:
 - Polls for queued runs every 5 seconds
-- Calls the Gumloop API with alert RSS URLs
+- Fetches coverage via SerpApi (past-24h results, paginated) using alert queries
 - Upserts articles to the database
 - Marks runs as SUCCESS or FAILED
+
+`SERPAPI_KEY` must be set when running the worker.
 
 ## API Routes
 

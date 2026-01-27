@@ -15,28 +15,36 @@ export interface CoveragePipelineInput {
   query: string
 }
 
-const SERPER_KEY = process.env.SERPER_KEY!
-const SERPER_URL = 'https://google.serper.dev/search'
+const SERPAPI_KEY = process.env.SERPAPI_KEY!
+const SERPAPI_BASE = 'https://serpapi.com/search.json'
+const DEFAULT_LOCATION = 'United States'
+const MAX_PAGES = 100
 
-interface SerperOrganicItem {
-  link: string
+interface SerpApiOrganicItem {
+  link?: string
   title?: string
   snippet?: string
   date?: string
   position?: number
+  source?: string
 }
 
-interface SerperResponse {
-  organic?: SerperOrganicItem[]
+interface SerpApiResponse {
+  search_metadata?: { status?: string }
+  error?: string
+  organic_results?: SerpApiOrganicItem[]
+  serpapi_pagination?: { next?: string; next_link?: string }
 }
 
-function itemToArticle(item: SerperOrganicItem): CoverageArticle {
+function itemToArticle(item: SerpApiOrganicItem): CoverageArticle {
   const url = item.link || ''
-  let outlet: string | undefined
-  try {
-    outlet = url ? new URL(url).hostname : undefined
-  } catch {
-    outlet = undefined
+  let outlet: string | undefined = item.source?.trim() || undefined
+  if (!outlet && url) {
+    try {
+      outlet = new URL(url).hostname
+    } catch {
+      outlet = undefined
+    }
   }
   let published_at: string | null = null
   if (item.date) {
@@ -58,9 +66,10 @@ function itemToArticle(item: SerperOrganicItem): CoverageArticle {
 }
 
 /**
- * Fetches coverage articles using Serper API.
- * For each alert with non-empty query, POSTs to google.serper.dev/search with q, tbs=qdr:d, page;
- * paginates until organic is empty or page > 10, maps to CoverageArticle and dedupes by link.
+ * Fetches coverage articles using SerpApi (serpapi.com).
+ * For each alert with non-empty query, GETs serpapi.com/search.json with q, tbs=qdr:d (past 24h);
+ * paginates using serpapi_pagination.next until no next page, organic_results empty, or max pages.
+ * Maps to CoverageArticle and dedupes by link.
  */
 export async function fetchCoverage(
   _orgId: string,
@@ -80,32 +89,42 @@ export async function fetchCoverage(
     const q = alert.query.trim()
     console.log(`[Coverage] Searching for: "${q}"`)
 
-    for (let page = 1; page <= 10; page++) {
+    const initialParams = new URLSearchParams({
+      engine: 'google',
+      q,
+      tbs: 'qdr:d',
+      hl: 'en',
+      gl: 'us',
+      google_domain: 'google.com',
+      api_key: SERPAPI_KEY,
+      location: DEFAULT_LOCATION
+    })
+
+    let nextUrl: string | null = `${SERPAPI_BASE}?${initialParams.toString()}`
+    let pageCount = 0
+
+    while (nextUrl && pageCount < MAX_PAGES) {
       try {
-        const res = await fetch(SERPER_URL, {
-          method: 'POST',
-          headers: {
-            'X-API-KEY': SERPER_KEY,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            q,
-            tbs: 'qdr:d',
-            gl: 'us',
-            hl: 'en',
-            autocorrect: false,
-            page
-          })
-        })
+        const res = await fetch(nextUrl)
 
         if (!res.ok) {
           const text = await res.text()
-          console.error(`[Coverage] Serper error (q="${q}", page=${page}): ${res.status} ${text}`)
-          throw new Error(`Serper error: ${res.status} ${text}`)
+          console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}): ${res.status} ${text}`)
+          throw new Error(`SerpApi error: ${res.status} ${text}`)
         }
 
-        const data: SerperResponse = await res.json()
-        const organic = data.organic ?? []
+        const data: SerpApiResponse = await res.json()
+
+        if (data.error) {
+          console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}): ${data.error}`)
+          throw new Error(`SerpApi error: ${data.error}`)
+        }
+        if (data.search_metadata?.status === 'Error') {
+          const msg = data.error ?? 'Search failed'
+          throw new Error(`SerpApi error: ${msg}`)
+        }
+
+        const organic = data.organic_results ?? []
         if (organic.length === 0) break
 
         for (const item of organic) {
@@ -115,9 +134,16 @@ export async function fetchCoverage(
           articles.push(itemToArticle(item))
         }
 
-        if (organic.length < 10) break
+        const pagination = data.serpapi_pagination
+        const nextLink = pagination?.next ?? pagination?.next_link
+        if (!nextLink || !nextLink.trim()) break
+
+        const nextParsed = new URL(nextLink)
+        nextParsed.searchParams.set('api_key', SERPAPI_KEY)
+        nextUrl = nextParsed.toString()
+        pageCount++
       } catch (err) {
-        console.error(`[Coverage] Serper error (q="${q}", page=${page}):`, err)
+        console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}):`, err)
         throw err
       }
     }
