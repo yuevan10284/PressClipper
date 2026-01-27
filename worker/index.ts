@@ -1,16 +1,13 @@
 import * as dotenv from 'dotenv'
 import * as path from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { fetchCoverage, type CoverageArticle } from './coverage'
 
 // Load .env.local file
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') })
 
 // Configuration
 const POLL_INTERVAL_MS = 5000 // 5 seconds
-const GUMLOOP_ENDPOINT = process.env.GUMLOOP_ENDPOINT!
-const GUMLOOP_API_KEY = process.env.GUMLOOP_API_KEY!
-const GUMLOOP_USER_ID = process.env.GUMLOOP_USER_ID!
-const GUMLOOP_SAVED_ITEM_ID = process.env.GUMLOOP_SAVED_ITEM_ID!
 
 // Create Supabase client with service role key
 const supabase = createClient(
@@ -30,23 +27,6 @@ interface Alert {
   rss_url: string
   label: string | null
   last_checked_at: string | null
-}
-
-interface GumloopResult {
-  url: string
-  canonical_url?: string
-  title?: string
-  outlet?: string
-  published_at?: string
-  snippet?: string
-  summary?: string
-  relevance_score?: number
-  importance_score?: number
-  labels?: string[]
-}
-
-interface GumloopResponse {
-  results?: GumloopResult[]
 }
 
 // Strip tracking parameters from URL
@@ -140,160 +120,11 @@ async function getClientWithAlerts(clientId: string) {
   return { client, alerts: alerts || [] }
 }
 
-// Call Gumloop API - starts a pipeline and polls for results
-async function callGumloop(
-  orgId: string,
-  clientId: string,
-  alerts: Alert[],
-  sinceTs: string
-): Promise<GumloopResult[]> {
-  // Use api_key as query parameter (not Bearer token)
-  const startUrl = `${GUMLOOP_ENDPOINT}?api_key=${GUMLOOP_API_KEY}&user_id=${GUMLOOP_USER_ID}&saved_item_id=${GUMLOOP_SAVED_ITEM_ID}`
-  
-  // Send just the raw URL string - the validator expects a plain URL
-  const rssUrl = alerts[0]?.rss_url || ''
-
-  console.log(`[Gumloop] Starting pipeline with URL:`, rssUrl)
-
-  try {
-    // Step 1: Start the pipeline - send URL as plain text
-    const startResponse = await fetch(startUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain'
-      },
-      body: rssUrl
-    })
-
-    if (!startResponse.ok) {
-      const text = await startResponse.text()
-      console.error(`[Gumloop] Error starting pipeline:`, text)
-      throw new Error(`Gumloop API error: ${startResponse.status} ${text}`)
-    }
-
-    const startData = await startResponse.json()
-    console.log(`[Gumloop] Pipeline started:`, JSON.stringify(startData, null, 2))
-    
-    const runId = startData.run_id
-    if (!runId) {
-      console.log(`[Gumloop] No run_id returned, checking for direct results`)
-      return startData.results || []
-    }
-
-    // Step 2: Poll for results
-    console.log(`[Gumloop] Polling for results, run_id: ${runId}`)
-    const pollUrl = `https://api.gumloop.com/api/v1/get_pl_run?api_key=${GUMLOOP_API_KEY}&run_id=${runId}&user_id=${GUMLOOP_USER_ID}`
-    
-    const maxAttempts = 60 // 5 minutes max (60 * 5 seconds)
-    let attempts = 0
-    
-    while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds
-      attempts++
-      
-      console.log(`[Gumloop] Poll attempt ${attempts}/${maxAttempts}`)
-      
-      const pollResponse = await fetch(pollUrl, {
-        method: 'GET'
-      })
-      
-      if (!pollResponse.ok) {
-        console.error(`[Gumloop] Poll error: ${pollResponse.status}`)
-        continue
-      }
-      
-      const pollData = await pollResponse.json()
-      console.log(`[Gumloop] Poll response state: ${pollData.state}`)
-      
-      if (pollData.state === 'DONE' || pollData.state === 'COMPLETED') {
-        console.log(`[Gumloop] Pipeline completed!`)
-        // Parse outputs - Gumloop returns outputs as a map
-        const outputs = pollData.outputs || {}
-        
-        console.log(`[Gumloop] Raw outputs:`, JSON.stringify(outputs, null, 2))
-        
-        // Try to find results in the outputs
-        // The exact key depends on your Gumloop pipeline configuration
-        let results: GumloopResult[] = []
-        
-        for (const key of Object.keys(outputs)) {
-          console.log(`[Gumloop] Checking output key: ${key}`)
-          const value = outputs[key]
-          
-          if (Array.isArray(value) && value.length > 0) {
-            console.log(`[Gumloop] First item sample:`, JSON.stringify(value[0], null, 2))
-            
-            results = value.map((item: any) => {
-              // Check if item is a string (HTML format from Gumloop) or object
-              if (typeof item === 'string') {
-                // Parse HTML format: "<b>OUTLET</b> (DATE)<br>TITLE<br>URL<br><br>"
-                const outletMatch = item.match(/<b>([^<]+)<\/b>/)
-                const dateMatch = item.match(/\(([^)]+)\)/)
-                const urlMatch = item.match(/https?:\/\/[^\s<]+/)
-                
-                // Extract title: text between </b>...<br> and <br>https://
-                let title = ''
-                const titleMatch = item.match(/<br>([^<]+)<br>https?:\/\//)
-                if (titleMatch) {
-                  title = titleMatch[1].trim()
-                }
-                
-                const url = urlMatch ? urlMatch[0].replace(/<br>/g, '') : ''
-                
-                return {
-                  url: url,
-                  canonical_url: url,
-                  title: title,
-                  outlet: outletMatch ? outletMatch[1] : '',
-                  published_at: dateMatch ? new Date(dateMatch[1]).toISOString() : null,
-                  snippet: '',
-                  summary: '',
-                  relevance_score: 50, // Default score
-                  importance_score: 50,
-                  labels: []
-                }
-              } else {
-                // Handle structured object format
-                const url = item.url || item.link || item.URL || item.Link || item.article_url || ''
-                return {
-                  url: url,
-                  canonical_url: item.canonical_url || url,
-                  title: item.title || item.Title || item.headline || '',
-                  outlet: item.outlet || item.source || item.Source || item.publisher || '',
-                  published_at: item.published_at || item.date || item.Date || item.published || null,
-                  snippet: item.snippet || item.description || item.Description || item.content || '',
-                  summary: item.summary || item.Summary || '',
-                  relevance_score: item.relevance_score || item.relevance || 0,
-                  importance_score: item.importance_score || item.importance || 0,
-                  labels: item.labels || item.tags || []
-                }
-              }
-            }).filter(r => r.url) // Only keep results with URLs
-            break
-          }
-        }
-        
-        console.log(`[Gumloop] Found ${results.length} valid results with URLs`)
-        return results
-      } else if (pollData.state === 'FAILED' || pollData.state === 'ERROR') {
-        console.error(`[Gumloop] Pipeline failed. Full response:`, JSON.stringify(pollData, null, 2))
-        throw new Error(`Gumloop pipeline failed: ${pollData.error || pollData.message || pollData.log || 'Unknown error'}`)
-      }
-      // Otherwise state is RUNNING/PENDING, keep polling
-    }
-    
-    throw new Error('Gumloop pipeline timed out after 5 minutes')
-  } catch (error) {
-    console.error(`[Gumloop] Request failed:`, error)
-    throw error
-  }
-}
-
 // Upsert articles
 async function upsertArticles(
   orgId: string,
   clientId: string,
-  results: GumloopResult[]
+  results: CoverageArticle[]
 ) {
   if (results.length === 0) {
     console.log('[Worker] No articles to upsert')
@@ -373,8 +204,7 @@ async function processRun(run: any) {
 
     console.log(`[Worker] Using since_ts: ${sinceTs}`)
 
-    // Call Gumloop
-    const results = await callGumloop(run.org_id, run.client_id, alerts, sinceTs)
+    const results = await fetchCoverage(run.org_id, run.client_id, alerts, sinceTs)
 
     // Upsert articles
     await upsertArticles(run.org_id, run.client_id, results)
@@ -395,7 +225,7 @@ async function processRun(run: any) {
 async function workerLoop() {
   console.log('[Worker] Starting PressClipper worker...')
   console.log(`[Worker] Poll interval: ${POLL_INTERVAL_MS}ms`)
-  console.log(`[Worker] Gumloop endpoint: ${GUMLOOP_ENDPOINT}`)
+  console.log(`[Worker] Coverage pipeline configured`)
 
   while (true) {
     try {
