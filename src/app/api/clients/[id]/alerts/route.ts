@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyClientAccess } from '@/lib/auth'
 import { createServiceClient } from '@/lib/supabase/server'
 
-// POST /api/clients/:id/alerts - Add an RSS feed alert
+// POST /api/clients/:id/alerts - Add a search-term alert
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -14,26 +14,19 @@ export async function POST(
     }
 
     const body = await request.json()
-    const { rss_url, label } = body
+    const { query, label } = body
 
-    if (!rss_url || typeof rss_url !== 'string') {
-      return NextResponse.json({ error: 'RSS URL is required' }, { status: 400 })
-    }
-
-    // Basic URL validation
-    try {
-      new URL(rss_url)
-    } catch {
-      return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 })
+    if (typeof query !== 'string' || query.trim().length === 0) {
+      return NextResponse.json({ error: 'Search term is required' }, { status: 400 })
     }
 
     const supabase = createServiceClient()
-    
+
     const { data: alert, error } = await supabase
       .from('alerts')
       .insert({
         client_id: params.id,
-        rss_url: rss_url.trim(),
+        query: query.trim(),
         label: label?.trim() || null,
         active: true
       })
@@ -77,7 +70,7 @@ export async function DELETE(
     }
 
     const supabase = createServiceClient()
-    
+
     const { error } = await supabase
       .from('alerts')
       .delete()

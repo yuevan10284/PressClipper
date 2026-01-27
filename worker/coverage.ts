@@ -12,12 +12,55 @@ export interface CoverageArticle {
 }
 
 export interface CoveragePipelineInput {
-  rss_url: string
+  query: string
+}
+
+const SERPER_KEY = process.env.SERPER_KEY!
+const SERPER_URL = 'https://google.serper.dev/search'
+
+interface SerperOrganicItem {
+  link: string
+  title?: string
+  snippet?: string
+  date?: string
+  position?: number
+}
+
+interface SerperResponse {
+  organic?: SerperOrganicItem[]
+}
+
+function itemToArticle(item: SerperOrganicItem): CoverageArticle {
+  const url = item.link || ''
+  let outlet: string | undefined
+  try {
+    outlet = url ? new URL(url).hostname : undefined
+  } catch {
+    outlet = undefined
+  }
+  let published_at: string | null = null
+  if (item.date) {
+    const d = new Date(item.date)
+    if (!isNaN(d.getTime())) published_at = d.toISOString()
+  }
+  return {
+    url,
+    canonical_url: url,
+    title: item.title ?? undefined,
+    outlet,
+    published_at,
+    snippet: item.snippet ?? undefined,
+    summary: undefined,
+    relevance_score: 50,
+    importance_score: 50,
+    labels: []
+  }
 }
 
 /**
- * Fetches coverage articles from the configured pipeline (alerts/feeds).
- * Returns a list of articles ready to be upserted into the articles table.
+ * Fetches coverage articles using Serper API.
+ * For each alert with non-empty query, POSTs to google.serper.dev/search with q, tbs=qdr:d, page;
+ * paginates until organic is empty or page > 10, maps to CoverageArticle and dedupes by link.
  */
 export async function fetchCoverage(
   _orgId: string,
@@ -25,120 +68,61 @@ export async function fetchCoverage(
   alerts: CoveragePipelineInput[],
   _sinceTs: string
 ): Promise<CoverageArticle[]> {
-  const endpoint = process.env.GUMLOOP_ENDPOINT!
-  const apiKey = process.env.GUMLOOP_API_KEY!
-  const userId = process.env.GUMLOOP_USER_ID!
-  const savedItemId = process.env.GUMLOOP_SAVED_ITEM_ID!
-  const startUrl = `${endpoint}?api_key=${apiKey}&user_id=${userId}&saved_item_id=${savedItemId}`
-  const rssUrl = alerts[0]?.rss_url || ''
+  const alertsWithQuery = alerts.filter((a) => typeof a.query === 'string' && a.query.trim().length > 0)
+  if (alertsWithQuery.length === 0) {
+    return []
+  }
 
-  console.log(`[CoveragePipeline] Starting with URL:`, rssUrl)
+  const seenUrls = new Set<string>()
+  const articles: CoverageArticle[] = []
 
-  try {
-    const startResponse = await fetch(startUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: rssUrl
-    })
+  for (const alert of alertsWithQuery) {
+    const q = alert.query.trim()
+    console.log(`[Coverage] Searching for: "${q}"`)
 
-    if (!startResponse.ok) {
-      const text = await startResponse.text()
-      console.error(`[CoveragePipeline] Error starting pipeline:`, text)
-      throw new Error(`Pipeline error: ${startResponse.status} ${text}`)
-    }
+    for (let page = 1; page <= 10; page++) {
+      try {
+        const res = await fetch(SERPER_URL, {
+          method: 'POST',
+          headers: {
+            'X-API-KEY': SERPER_KEY,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            q,
+            tbs: 'qdr:d',
+            gl: 'us',
+            hl: 'en',
+            autocorrect: false,
+            page
+          })
+        })
 
-    const startData = await startResponse.json()
-    console.log(`[CoveragePipeline] Started:`, JSON.stringify(startData, null, 2))
-
-    const runId = startData.run_id
-    if (!runId) {
-      console.log(`[CoveragePipeline] No run_id, using direct results`)
-      return (startData.results || []).map(normalizeItem)
-    }
-
-    console.log(`[CoveragePipeline] Polling run_id: ${runId}`)
-    const pollUrl = `https://api.gumloop.com/api/v1/get_pl_run?api_key=${apiKey}&run_id=${runId}&user_id=${userId}`
-    const maxAttempts = 60
-    let attempts = 0
-
-    while (attempts < maxAttempts) {
-      await new Promise((r) => setTimeout(r, 5000))
-      attempts++
-      console.log(`[CoveragePipeline] Poll ${attempts}/${maxAttempts}`)
-
-      const pollResponse = await fetch(pollUrl, { method: 'GET' })
-      if (!pollResponse.ok) {
-        console.error(`[CoveragePipeline] Poll error: ${pollResponse.status}`)
-        continue
-      }
-
-      const pollData = await pollResponse.json()
-      console.log(`[CoveragePipeline] State: ${pollData.state}`)
-
-      if (pollData.state === 'DONE' || pollData.state === 'COMPLETED') {
-        console.log(`[CoveragePipeline] Done`)
-        const outputs = pollData.outputs || {}
-
-        for (const key of Object.keys(outputs)) {
-          const value = outputs[key]
-          if (Array.isArray(value) && value.length > 0) {
-            const results = value.map(normalizeItem).filter((r: CoverageArticle) => r.url)
-            console.log(`[CoveragePipeline] Found ${results.length} articles`)
-            return results
-          }
+        if (!res.ok) {
+          const text = await res.text()
+          console.error(`[Coverage] Serper error (q="${q}", page=${page}): ${res.status} ${text}`)
+          throw new Error(`Serper error: ${res.status} ${text}`)
         }
-        return []
+
+        const data: SerperResponse = await res.json()
+        const organic = data.organic ?? []
+        if (organic.length === 0) break
+
+        for (const item of organic) {
+          const link = item.link
+          if (!link || link.trim() === '' || seenUrls.has(link)) continue
+          seenUrls.add(link)
+          articles.push(itemToArticle(item))
+        }
+
+        if (organic.length < 10) break
+      } catch (err) {
+        console.error(`[Coverage] Serper error (q="${q}", page=${page}):`, err)
+        throw err
       }
-
-      if (pollData.state === 'FAILED' || pollData.state === 'ERROR') {
-        console.error(`[CoveragePipeline] Failed:`, JSON.stringify(pollData, null, 2))
-        throw new Error(`Pipeline failed: ${pollData.error || pollData.message || pollData.log || 'Unknown'}`)
-      }
-    }
-
-    throw new Error('Coverage pipeline timed out after 5 minutes')
-  } catch (error) {
-    console.error(`[CoveragePipeline] Error:`, error)
-    throw error
-  }
-}
-
-function normalizeItem(item: unknown): CoverageArticle {
-  if (typeof item === 'string') {
-    const outletMatch = item.match(/<b>([^<]+)<\/b>/)
-    const dateMatch = item.match(/\(([^)]+)\)/)
-    const urlMatch = item.match(/https?:\/\/[^\s<]+/)
-    let title = ''
-    const titleMatch = item.match(/<br>([^<]+)<br>https?:\/\//)
-    if (titleMatch) title = titleMatch[1].trim()
-    const url = urlMatch ? urlMatch[0].replace(/<br>/g, '') : ''
-    return {
-      url,
-      canonical_url: url,
-      title,
-      outlet: outletMatch ? outletMatch[1] : '',
-      published_at: dateMatch ? new Date(dateMatch[1]).toISOString() : null,
-      snippet: '',
-      summary: '',
-      relevance_score: 50,
-      importance_score: 50,
-      labels: []
     }
   }
 
-  const o = item as Record<string, unknown>
-  const url = [o.url, o.link, o.URL, o.Link, o.article_url].find(Boolean) as string | undefined
-  const u = url || ''
-  return {
-    url: u,
-    canonical_url: (o.canonical_url as string) || u,
-    title: (o.title ?? o.Title ?? o.headline ?? '') as string,
-    outlet: (o.outlet ?? o.source ?? o.Source ?? o.publisher ?? '') as string,
-    published_at: (o.published_at ?? o.date ?? o.Date ?? o.published ?? null) as string | null,
-    snippet: (o.snippet ?? o.description ?? o.Description ?? o.content ?? '') as string,
-    summary: (o.summary ?? o.Summary ?? '') as string,
-    relevance_score: (o.relevance_score ?? o.relevance ?? 0) as number,
-    importance_score: (o.importance_score ?? o.importance ?? 0) as number,
-    labels: (o.labels ?? o.tags ?? []) as string[]
-  }
+  console.log(`[Coverage] Found ${articles.length} articles`)
+  return articles
 }

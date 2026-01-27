@@ -40,7 +40,7 @@ CREATE INDEX idx_clients_org_id ON clients(org_id);
 CREATE TABLE alerts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   client_id UUID REFERENCES clients(id) ON DELETE CASCADE NOT NULL,
-  rss_url TEXT NOT NULL,
+  query TEXT NOT NULL,
   label TEXT,
   last_checked_at TIMESTAMPTZ,
   active BOOLEAN DEFAULT TRUE,

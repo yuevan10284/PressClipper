@@ -12,7 +12,7 @@ import jsPDF from 'jspdf'
 
 interface Alert {
   id: string
-  rss_url: string
+  query: string
   label: string | null
   active: boolean
   last_checked_at: string | null
@@ -58,19 +58,19 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const [refreshing, setRefreshing] = useState(false)
   const [currentRunId, setCurrentRunId] = useState<string | null>(null)
   const [error, setError] = useState('')
-  
+
   // Alert form
   const [newRssUrl, setNewRssUrl] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [addingAlert, setAddingAlert] = useState(false)
-  
+
   // Filters
   const [datePreset, setDatePreset] = useState<'24h' | '7d' | '30d' | 'custom'>('7d')
   const [searchQuery, setSearchQuery] = useState('')
   const [minScore, setMinScore] = useState('')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
-  
+
   const router = useRouter()
 
   const fetchClient = useCallback(async () => {
@@ -79,7 +79,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       if (!res.ok) throw new Error('Failed to fetch client')
       const data = await res.json()
       setClient(data.client)
-      
+
       // Check for running/queued run
       const activeRun = data.client.runs?.find(
         (r: Run) => r.status === 'RUNNING' || r.status === 'QUEUED'
@@ -95,11 +95,11 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const fetchCoverage = useCallback(async () => {
     try {
       const queryParams = new URLSearchParams()
-      
+
       // Calculate date range from preset
       const now = new Date()
       let from: Date | null = null
-      
+
       if (datePreset === '24h') {
         from = new Date(now.getTime() - 24 * 60 * 60 * 1000)
       } else if (datePreset === '7d') {
@@ -110,14 +110,14 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         if (customFrom) queryParams.set('from', customFrom)
         if (customTo) queryParams.set('to', customTo)
       }
-      
+
       if (from && datePreset !== 'custom') {
         queryParams.set('from', from.toISOString())
       }
-      
+
       if (searchQuery) queryParams.set('q', searchQuery)
       if (minScore) queryParams.set('minScore', minScore)
-      
+
       const res = await fetch(`/api/clients/${params.id}/coverage?${queryParams}`)
       if (!res.ok) throw new Error('Failed to fetch coverage')
       const data = await res.json()
@@ -145,7 +145,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       try {
         const res = await fetch(`/api/runs/${currentRunId}`)
         if (!res.ok) return
-        
+
         const data = await res.json()
         if (data.run.status === 'SUCCESS' || data.run.status === 'FAILED') {
           setCurrentRunId(null)
@@ -168,7 +168,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       const res = await fetch(`/api/clients/${params.id}/refresh`, {
         method: 'POST'
       })
-      
+
       if (!res.ok) {
         const data = await res.json()
         if (data.run_id) {
@@ -176,7 +176,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         }
         throw new Error(data.error || 'Failed to start refresh')
       }
-      
+
       const data = await res.json()
       setCurrentRunId(data.run_id)
       fetchClient()
@@ -188,16 +188,16 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
   const handleCancelRun = async () => {
     if (!currentRunId) return
-    
+
     try {
       const res = await fetch(`/api/runs/${currentRunId}/cancel`, {
         method: 'POST'
       })
-      
+
       if (!res.ok) {
         throw new Error('Failed to cancel run')
       }
-      
+
       setCurrentRunId(null)
       setRefreshing(false)
       fetchClient()
@@ -209,19 +209,19 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const handleAddAlert = async (e: React.FormEvent) => {
     e.preventDefault()
     setAddingAlert(true)
-    
+
     try {
       const res = await fetch(`/api/clients/${params.id}/alerts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rss_url: newRssUrl, label: newLabel })
+        body: JSON.stringify({ query: newRssUrl, label: newLabel })
       })
-      
+
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || 'Failed to add alert')
       }
-      
+
       setNewRssUrl('')
       setNewLabel('')
       fetchClient()
@@ -234,12 +234,12 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
   const handleDeleteAlert = async (alertId: string) => {
     if (!confirm('Are you sure you want to delete this alert?')) return
-    
+
     try {
       const res = await fetch(`/api/clients/${params.id}/alerts?alertId=${alertId}`, {
         method: 'DELETE'
       })
-      
+
       if (!res.ok) throw new Error('Failed to delete alert')
       fetchClient()
     } catch (err) {
@@ -249,7 +249,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
   const handleExportCSV = () => {
     if (articles.length === 0) return
-    
+
     const headers = ['Title', 'Outlet', 'Published Date', 'URL', 'Relevance Score', 'Importance Score']
     const rows = articles.map(article => [
       article.title || 'Untitled',
@@ -259,12 +259,12 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       article.relevance_score.toString(),
       article.importance_score.toString()
     ])
-    
+
     const csvContent = [
       headers.join(','),
       ...rows.map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(','))
     ].join('\n')
-    
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
@@ -275,27 +275,27 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
   const handleExportPDF = () => {
     if (articles.length === 0 || !client) return
-    
+
     const doc = new jsPDF()
     const pageWidth = doc.internal.pageSize.width
     const pageHeight = doc.internal.pageSize.height
     const margin = 20
     const contentWidth = pageWidth - margin * 2
-    
+
     // Title
     doc.setFontSize(18)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(37, 98, 209) // brand-blue
     doc.text(`${client.name} - Coverage Report`, margin, 25)
-    
+
     // Subtitle with date
     doc.setFontSize(10)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100)
     doc.text(`Generated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`, margin, 33)
-    
+
     let yPos = 50
-    
+
     // Articles list
     articles.forEach((article) => {
       // Check if we need a new page
@@ -303,33 +303,33 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         doc.addPage()
         yPos = 25
       }
-      
+
       // Format date
-      const dateStr = article.published_at 
+      const dateStr = article.published_at
         ? new Date(article.published_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
         : 'Unknown Date'
-      
+
       // Outlet - Date - Title line
       const outlet = (article.outlet || 'Unknown Outlet').toUpperCase()
       const title = article.title || 'Untitled'
       const headerLine = `${outlet} – ${dateStr} – ${title}`
-      
+
       doc.setFontSize(10)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(0, 0, 0)
-      
+
       // Word wrap the header line
       const headerLines = doc.splitTextToSize(headerLine, contentWidth)
       doc.text(headerLines, margin, yPos)
       yPos += headerLines.length * 5
-      
+
       // URL line (hyperlinked)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(37, 98, 209) // brand-blue for link
       doc.textWithLink(article.url, margin, yPos, { url: article.url })
       yPos += 18 // Blank line spacing before next article
     })
-    
+
     doc.save(`${client.name}-coverage-${new Date().toISOString().split('T')[0]}.pdf`)
   }
 
@@ -372,11 +372,11 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   return (
     <div className="min-h-screen bg-brand-bg">
       <Navbar />
-      
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="mb-6">
-          <button 
+          <button
             onClick={() => router.push('/dashboard')}
             className="text-gray-600 hover:text-gray-900 flex items-center text-sm mb-4"
           >
@@ -385,7 +385,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
             </svg>
             Back to Dashboard
           </button>
-          
+
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">{client.name}</h1>
@@ -403,8 +403,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                     </svg>
                     <span className="text-sm font-medium text-gray-700">Processing...</span>
                   </div>
-                  <Button 
-                    onClick={handleCancelRun} 
+                  <Button
+                    onClick={handleCancelRun}
                     variant="danger"
                     size="sm"
                   >
@@ -415,8 +415,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                   </Button>
                 </>
               ) : (
-                <Button 
-                  onClick={handleRefresh} 
+                <Button
+                  onClick={handleRefresh}
                   loading={refreshing}
                   disabled={refreshing}
                 >
@@ -428,7 +428,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
               )}
             </div>
           </div>
-          
+
           {/* Run Status */}
           {client.last_run && (
             <div className="mt-4 flex items-center gap-4 text-sm">
@@ -459,11 +459,11 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
           <div className="lg:col-span-1 space-y-6">
             <Card>
               <CardHeader>
-                <h2 className="font-semibold text-gray-900">Google Alerts RSS Feeds</h2>
+                <h2 className="font-semibold text-gray-900">Coverage search terms</h2>
               </CardHeader>
               <CardContent className="space-y-4">
                 {client.alerts.length === 0 ? (
-                  <p className="text-sm text-gray-500">No alerts configured yet.</p>
+                  <p className="text-sm text-gray-500">No search terms configured yet.</p>
                 ) : (
                   <ul className="space-y-3">
                     {client.alerts.map((alert) => (
@@ -472,7 +472,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                           {alert.label && (
                             <p className="font-medium text-gray-900 text-sm">{alert.label}</p>
                           )}
-                          <p className="text-xs text-gray-500 truncate">{alert.rss_url}</p>
+                          <p className="text-xs text-gray-500 truncate">{alert.query}</p>
                           {alert.last_checked_at && (
                             <p className="text-xs text-gray-400 mt-1">
                               Checked {formatRelativeTime(alert.last_checked_at)}
@@ -492,15 +492,15 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                     ))}
                   </ul>
                 )}
-                
+
                 {/* Add Alert Form */}
                 <form onSubmit={handleAddAlert} className="pt-4 border-t border-gray-100">
-                  <h3 className="text-sm font-medium text-gray-700 mb-3">Add New Alert</h3>
+                  <h3 className="text-sm font-medium text-gray-700 mb-3">Add search term</h3>
                   <div className="space-y-3">
                     <Input
-                      id="rss_url"
-                      type="url"
-                      placeholder="https://google.com/alerts/feeds/..."
+                      id="query"
+                      type="text"
+                      placeholder="e.g. Company name, product, or topic"
                       value={newRssUrl}
                       onChange={(e) => setNewRssUrl(e.target.value)}
                       required
@@ -555,7 +555,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                     )}
                   </div>
                 </div>
-                
+
                 {/* Filters */}
                 <div className="mt-4 space-y-3">
                   <div className="flex flex-wrap gap-2">
@@ -563,17 +563,16 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                       <button
                         key={preset}
                         onClick={() => setDatePreset(preset)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                          datePreset === preset
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${datePreset === preset
                             ? 'bg-brand-cream text-brand-blue'
                             : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        }`}
+                          }`}
                       >
                         {preset === 'custom' ? 'Custom' : preset}
                       </button>
                     ))}
                   </div>
-                  
+
                   {datePreset === 'custom' && (
                     <div className="flex gap-2">
                       <Input
@@ -590,7 +589,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                       />
                     </div>
                   )}
-                  
+
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <Input
@@ -613,7 +612,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                   </div>
                 </div>
               </CardHeader>
-              
+
               <CardContent className="divide-y divide-gray-100">
                 {articles.length === 0 ? (
                   <div className="py-12 text-center">

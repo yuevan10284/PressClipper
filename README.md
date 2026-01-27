@@ -128,7 +128,7 @@ The worker:
   "org_id": "uuid",
   "client_id": "uuid",
   "alerts": [
-    { "alert_id": "uuid", "rss_url": "https://..." }
+    { "alert_id": "uuid", "query": "https://..." }
   ],
   "since_ts": "2024-01-01T00:00:00Z"
 }

@@ -24,7 +24,7 @@ const supabase = createClient(
 // Types
 interface Alert {
   id: string
-  rss_url: string
+  query: string
   label: string | null
   last_checked_at: string | null
 }
@@ -37,15 +37,15 @@ function canonicalizeUrl(url: string): string {
       'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
       'gclid', 'fbclid', 'msclkid', 'mc_eid', 'yclid', 'ref', '_ga'
     ]
-    
+
     trackingParams.forEach(param => {
       parsed.searchParams.delete(param)
     })
-    
+
     if (parsed.hash && parsed.hash.includes('=')) {
       parsed.hash = ''
     }
-    
+
     return parsed.toString()
   } catch {
     return url
@@ -194,7 +194,7 @@ async function processRun(run: any) {
     const lastCheckedDates = alerts
       .filter(a => a.last_checked_at)
       .map(a => new Date(a.last_checked_at!).getTime())
-    
+
     let sinceTs: string
     if (lastCheckedDates.length > 0) {
       sinceTs = new Date(Math.max(...lastCheckedDates)).toISOString()
@@ -235,7 +235,7 @@ async function workerLoop() {
       if (run) {
         // Try to mark as running (optimistic lock)
         const acquired = await markRunning(run.id)
-        
+
         if (acquired) {
           await processRun(run)
         } else {
@@ -256,14 +256,11 @@ function validateEnv() {
   const required = [
     'NEXT_PUBLIC_SUPABASE_URL',
     'SUPABASE_SERVICE_ROLE_KEY',
-    'GUMLOOP_ENDPOINT',
-    'GUMLOOP_API_KEY',
-    'GUMLOOP_USER_ID',
-    'GUMLOOP_SAVED_ITEM_ID'
+    'SERPER_KEY'
   ]
 
   const missing = required.filter(key => !process.env[key])
-  
+
   if (missing.length > 0) {
     console.error('[Worker] Missing environment variables:', missing.join(', '))
     process.exit(1)

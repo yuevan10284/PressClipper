@@ -25,7 +25,7 @@ export interface Client {
 export interface Alert {
   id: string
   client_id: string
-  rss_url: string
+  query: string
   label: string | null
   last_checked_at: string | null
   active: boolean
@@ -74,7 +74,7 @@ export interface GumloopPayload {
   client_id: string
   alerts: Array<{
     alert_id: string
-    rss_url: string
+    query: string
   }>
   since_ts: string
 }
