@@ -75,8 +75,32 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
   const [pageSize, setPageSize] = useState<number>(5)
   const [coveragePage, setCoveragePage] = useState(1)
+  const [coverageLoading, setCoverageLoading] = useState(false)
 
   const router = useRouter()
+
+  function ArticleListSkeleton({ count = 5 }: { count?: number }) {
+    return (
+      <div className="divide-y divide-gray-100">
+        {Array.from({ length: count }).map((_, i) => (
+          <div key={i} className="py-4 first:pt-0 last:pb-0 animate-pulse">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0 space-y-2">
+                <div className="h-4 bg-gray-200 rounded w-3/4" />
+                <div className="h-3 bg-gray-200 rounded w-1/3" />
+                <div className="h-3 bg-gray-200 rounded w-full" />
+                <div className="h-3 bg-gray-200 rounded w-2/3" />
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="h-5 w-12 bg-gray-200 rounded" />
+                <div className="h-5 w-12 bg-gray-200 rounded" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   function buildCoverageParams(limit: number, offset: number): URLSearchParams {
     const queryParams = new URLSearchParams()
@@ -140,8 +164,10 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     setCoveragePage(1)
     const load = async () => {
       setLoading(true)
+      setCoverageLoading(true)
       await fetchClient()
       await fetchCoverage(1)
+      setCoverageLoading(false)
       setLoading(false)
     }
     load()
@@ -365,12 +391,21 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       <div className="min-h-screen bg-brand-bg">
         <Navbar />
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="animate-pulse">
-            <div className="h-8 bg-gray-200 rounded w-1/4 mb-4" />
-            <div className="h-4 bg-gray-200 rounded w-1/2 mb-8" />
-            <div className="grid gap-6 lg:grid-cols-3">
-              <div className="lg:col-span-1 h-64 bg-gray-200 rounded-xl" />
-              <div className="lg:col-span-2 h-96 bg-gray-200 rounded-xl" />
+          <div className="mb-6">
+            <div className="h-4 bg-gray-200 rounded w-24 mb-4 animate-pulse" />
+            <div className="h-8 bg-gray-200 rounded w-1/4 animate-pulse mb-2" />
+            <div className="h-4 bg-gray-200 rounded w-1/2 mb-8 animate-pulse" />
+          </div>
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-1 h-64 bg-gray-200 rounded-xl animate-pulse" />
+            <div className="lg:col-span-2 rounded-xl border border-gray-200 bg-white overflow-hidden">
+              <div className="p-6 border-b border-gray-100">
+                <div className="h-5 bg-gray-200 rounded w-32 mb-4 animate-pulse" />
+                <div className="h-9 bg-gray-200 rounded w-full max-w-xs animate-pulse" />
+              </div>
+              <div className="p-6">
+                <ArticleListSkeleton count={5} />
+              </div>
             </div>
           </div>
         </main>
@@ -641,7 +676,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
               </CardHeader>
 
               <CardContent className="divide-y divide-gray-100">
-                {articles.length === 0 ? (
+                {coverageLoading && <ArticleListSkeleton count={pageSize} />}
+                {!coverageLoading && articles.length === 0 && (
                   <div className="py-12 text-center">
                     <svg className="w-12 h-12 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
@@ -651,7 +687,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                       Try adjusting your filters or run a refresh to fetch new articles.
                     </p>
                   </div>
-                ) : (
+                )}
+                {!coverageLoading && articles.length > 0 && (
                   <>
                   {articles.map((article) => (
                     <article key={article.id} className="py-4 first:pt-0 last:pb-0">
@@ -709,7 +746,9 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                       </div>
                     </article>
                   ))}
-                  {articlesTotal > 0 && (
+                  </>
+                )}
+                {articlesTotal > 0 && (
                     <div className="flex flex-wrap items-center justify-between gap-4 pt-4 pb-2 border-t border-gray-100">
                       <div className="flex items-center gap-4 flex-wrap">
                         <span className="text-sm text-gray-500">
@@ -719,11 +758,13 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                           <span className="text-sm text-gray-500">Per page</span>
                           <select
                             value={pageSize}
-                            onChange={(e) => {
+                            onChange={async (e) => {
                               const n = Number(e.target.value)
                               setPageSize(n)
                               setCoveragePage(1)
-                              fetchCoverage(1, n)
+                              setCoverageLoading(true)
+                              await fetchCoverage(1, n)
+                              setCoverageLoading(false)
                             }}
                             className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent"
                           >
@@ -737,11 +778,13 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={coveragePage <= 1}
-                          onClick={() => {
+                          disabled={coveragePage <= 1 || coverageLoading}
+                          onClick={async () => {
                             const prevPage = Math.max(1, coveragePage - 1)
                             setCoveragePage(prevPage)
-                            fetchCoverage(prevPage)
+                            setCoverageLoading(true)
+                            await fetchCoverage(prevPage)
+                            setCoverageLoading(false)
                           }}
                         >
                           Previous
@@ -749,11 +792,13 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={coveragePage * pageSize >= articlesTotal}
-                          onClick={() => {
+                          disabled={coveragePage * pageSize >= articlesTotal || coverageLoading}
+                          onClick={async () => {
                             const nextPage = coveragePage + 1
                             setCoveragePage(nextPage)
-                            fetchCoverage(nextPage)
+                            setCoverageLoading(true)
+                            await fetchCoverage(nextPage)
+                            setCoverageLoading(false)
                           }}
                         >
                           Next
@@ -761,8 +806,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                       </div>
                     </div>
                   )}
-                  </>
-                )}
               </CardContent>
             </Card>
           </div>
