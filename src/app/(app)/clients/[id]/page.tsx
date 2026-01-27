@@ -71,7 +71,36 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
+  // Pagination
+  const PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const
+  const [pageSize, setPageSize] = useState<number>(5)
+  const [coveragePage, setCoveragePage] = useState(1)
+
   const router = useRouter()
+
+  function buildCoverageParams(limit: number, offset: number): URLSearchParams {
+    const queryParams = new URLSearchParams()
+    const now = new Date()
+    let from: Date | null = null
+    if (datePreset === '24h') {
+      from = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    } else if (datePreset === '7d') {
+      from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+    } else if (datePreset === '30d') {
+      from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    } else if (datePreset === 'custom') {
+      if (customFrom) queryParams.set('from', customFrom)
+      if (customTo) queryParams.set('to', customTo)
+    }
+    if (from && datePreset !== 'custom') {
+      queryParams.set('from', from.toISOString())
+    }
+    if (searchQuery) queryParams.set('q', searchQuery)
+    if (minScore) queryParams.set('minScore', minScore)
+    queryParams.set('limit', String(limit))
+    queryParams.set('offset', String(offset))
+    return queryParams
+  }
 
   const fetchClient = useCallback(async () => {
     try {
@@ -92,46 +121,27 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     }
   }, [params.id])
 
-  const fetchCoverage = useCallback(async () => {
+  const fetchCoverage = useCallback(async (page: number, limitOverride?: number) => {
     try {
-      const queryParams = new URLSearchParams()
-
-      // Calculate date range from preset
-      const now = new Date()
-      let from: Date | null = null
-
-      if (datePreset === '24h') {
-        from = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-      } else if (datePreset === '7d') {
-        from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      } else if (datePreset === '30d') {
-        from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-      } else if (datePreset === 'custom') {
-        if (customFrom) queryParams.set('from', customFrom)
-        if (customTo) queryParams.set('to', customTo)
-      }
-
-      if (from && datePreset !== 'custom') {
-        queryParams.set('from', from.toISOString())
-      }
-
-      if (searchQuery) queryParams.set('q', searchQuery)
-      if (minScore) queryParams.set('minScore', minScore)
-
+      const limit = limitOverride ?? pageSize
+      const queryParams = buildCoverageParams(limit, (page - 1) * limit)
       const res = await fetch(`/api/clients/${params.id}/coverage?${queryParams}`)
       if (!res.ok) throw new Error('Failed to fetch coverage')
       const data = await res.json()
       setArticles(data.articles)
-      setArticlesTotal(data.total)
+      setArticlesTotal(data.total ?? 0)
     } catch (err) {
       console.error('Error fetching coverage:', err)
     }
-  }, [params.id, datePreset, searchQuery, minScore, customFrom, customTo])
+  }, [params.id, datePreset, searchQuery, minScore, customFrom, customTo, pageSize])
 
+  // Reset to page 1 and refetch when filters change; initial load fetches client + coverage page 1
   useEffect(() => {
+    setCoveragePage(1)
     const load = async () => {
       setLoading(true)
-      await Promise.all([fetchClient(), fetchCoverage()])
+      await fetchClient()
+      await fetchCoverage(1)
       setLoading(false)
     }
     load()
@@ -150,9 +160,9 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         if (data.run.status === 'SUCCESS' || data.run.status === 'FAILED') {
           setCurrentRunId(null)
           setRefreshing(false)
-          // Refresh data
+          setCoveragePage(1)
           fetchClient()
-          fetchCoverage()
+          fetchCoverage(1)
         }
       } catch (err) {
         console.error('Error polling run status:', err)
@@ -179,8 +189,9 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
       const data = await res.json()
       setCurrentRunId(data.run_id)
+      setCoveragePage(1)
       await fetchClient()
-      await fetchCoverage()
+      await fetchCoverage(1)
       setRefreshing(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
@@ -249,11 +260,18 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     }
   }
 
-  const handleExportCSV = () => {
-    if (articles.length === 0) return
+  const handleExportCSV = async () => {
+    if (articlesTotal === 0) return
+
+    const limit = Math.min(articlesTotal, 10_000)
+    const queryParams = buildCoverageParams(limit, 0)
+    const res = await fetch(`/api/clients/${params.id}/coverage?${queryParams}`)
+    if (!res.ok) return
+    const data = await res.json()
+    const allArticles: Article[] = data.articles ?? []
 
     const headers = ['Title', 'Outlet', 'Published Date', 'URL', 'Relevance Score', 'Importance Score']
-    const rows = articles.map(article => [
+    const rows = allArticles.map(article => [
       article.title || 'Untitled',
       article.outlet || '',
       article.published_at ? formatDate(article.published_at) : '',
@@ -275,8 +293,15 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     URL.revokeObjectURL(link.href)
   }
 
-  const handleExportPDF = () => {
-    if (articles.length === 0 || !client) return
+  const handleExportPDF = async () => {
+    if (articlesTotal === 0 || !client) return
+
+    const limit = Math.min(articlesTotal, 10_000)
+    const queryParams = buildCoverageParams(limit, 0)
+    const res = await fetch(`/api/clients/${params.id}/coverage?${queryParams}`)
+    if (!res.ok) return
+    const data = await res.json()
+    const allArticles: Article[] = data.articles ?? []
 
     const doc = new jsPDF()
     const pageWidth = doc.internal.pageSize.width
@@ -299,7 +324,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     let yPos = 50
 
     // Articles list
-    articles.forEach((article) => {
+    allArticles.forEach((article) => {
       // Check if we need a new page
       if (yPos > pageHeight - 40) {
         doc.addPage()
@@ -531,7 +556,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                   <h2 className="font-semibold text-gray-900">Coverage Feed</h2>
                   <div className="flex items-center gap-3">
                     <span className="text-sm text-gray-500">{articlesTotal} articles</span>
-                    {articles.length > 0 && (
+                    {articlesTotal > 0 && (
                       <div className="flex gap-2">
                         <button
                           onClick={handleExportCSV}
@@ -627,7 +652,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                     </p>
                   </div>
                 ) : (
-                  articles.map((article) => (
+                  <>
+                  {articles.map((article) => (
                     <article key={article.id} className="py-4 first:pt-0 last:pb-0">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
@@ -682,7 +708,60 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                         </div>
                       </div>
                     </article>
-                  ))
+                  ))}
+                  {articlesTotal > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-4 pt-4 pb-2 border-t border-gray-100">
+                      <div className="flex items-center gap-4 flex-wrap">
+                        <span className="text-sm text-gray-500">
+                          Showing {(coveragePage - 1) * pageSize + 1}–{Math.min(coveragePage * pageSize, articlesTotal)} of {articlesTotal}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-500">Per page</span>
+                          <select
+                            value={pageSize}
+                            onChange={(e) => {
+                              const n = Number(e.target.value)
+                              setPageSize(n)
+                              setCoveragePage(1)
+                              fetchCoverage(1, n)
+                            }}
+                            className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent"
+                          >
+                            {PAGE_SIZE_OPTIONS.map((n) => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={coveragePage <= 1}
+                          onClick={() => {
+                            const prevPage = Math.max(1, coveragePage - 1)
+                            setCoveragePage(prevPage)
+                            fetchCoverage(prevPage)
+                          }}
+                        >
+                          Previous
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={coveragePage * pageSize >= articlesTotal}
+                          onClick={() => {
+                            const nextPage = coveragePage + 1
+                            setCoveragePage(nextPage)
+                            fetchCoverage(nextPage)
+                          }}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  </>
                 )}
               </CardContent>
             </Card>
