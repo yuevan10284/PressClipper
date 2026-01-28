@@ -1,4 +1,4 @@
-# PressClipper.
+# PressClipper
 
 A media monitoring SaaS application that allows users to track press coverage for their clients using Google Alerts RSS feeds.
 
