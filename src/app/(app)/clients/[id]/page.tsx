@@ -249,7 +249,11 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
   }
 
   const handleHideArticle = (articleId: string) => {
-    setHiddenArticleIds(prev => new Set([...prev, articleId]))
+    setHiddenArticleIds(prev => {
+      const newSet = new Set(prev)
+      newSet.add(articleId)
+      return newSet
+    })
   }
 
   const handleRestoreAllArticles = () => {
@@ -335,7 +339,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
       ])
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
+    } catch (_err) {
       // Fallback to plain text if HTML clipboard fails
       try {
         await navigator.clipboard.writeText(plainText)
