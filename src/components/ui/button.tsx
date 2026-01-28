@@ -11,20 +11,48 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', loading, disabled, children, ...props }, ref) => {
-    const baseStyles = 'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none'
+    const baseStyles = cn(
+      'inline-flex items-center justify-center font-semibold rounded-xl',
+      'transition-all duration-200 ease-out',
+      'focus:outline-none focus:ring-2 focus:ring-offset-2',
+      'disabled:opacity-50 disabled:pointer-events-none disabled:transform-none',
+      'active:scale-[0.98]'
+    )
     
     const variants = {
-      primary: 'bg-brand-blue text-white hover:bg-primary-600 focus:ring-brand-blue',
-      secondary: 'bg-brand-cream text-brand-black hover:bg-opacity-80 focus:ring-brand-blue',
-      outline: 'border border-gray-300 bg-white text-gray-700 hover:bg-brand-cream focus:ring-brand-blue',
-      ghost: 'text-gray-600 hover:bg-brand-cream hover:text-gray-900 focus:ring-gray-500',
-      danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500'
+      primary: cn(
+        'bg-gradient-to-r from-brand-blue to-primary-400 text-white',
+        'hover:from-primary-600 hover:to-brand-blue hover:shadow-glow',
+        'hover:-translate-y-0.5',
+        'focus:ring-brand-blue'
+      ),
+      secondary: cn(
+        'bg-gradient-to-r from-brand-cream to-brand-cream/80 text-gray-800',
+        'hover:from-brand-cream/90 hover:to-brand-cream',
+        'border border-brand-cream',
+        'focus:ring-brand-blue'
+      ),
+      outline: cn(
+        'border-2 border-gray-200 bg-white/50 text-gray-700',
+        'hover:border-brand-blue hover:text-brand-blue hover:bg-white',
+        'focus:ring-brand-blue'
+      ),
+      ghost: cn(
+        'text-gray-600 bg-transparent',
+        'hover:bg-brand-cream/50 hover:text-gray-900',
+        'focus:ring-gray-500'
+      ),
+      danger: cn(
+        'bg-gradient-to-r from-red-500 to-red-600 text-white',
+        'hover:from-red-600 hover:to-red-700 hover:shadow-lg',
+        'focus:ring-red-500'
+      )
     }
     
     const sizes = {
-      sm: 'px-3 py-1.5 text-sm',
-      md: 'px-4 py-2 text-sm',
-      lg: 'px-6 py-3 text-base'
+      sm: 'px-3.5 py-1.5 text-sm',
+      md: 'px-5 py-2.5 text-sm',
+      lg: 'px-7 py-3.5 text-base'
     }
 
     return (

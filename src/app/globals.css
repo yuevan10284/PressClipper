@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  --foreground: #000000;
+  --foreground: #1a1a2e;
   --background: #F7F5F6;
   --brand-blue: #2562D1;
   --brand-cream: #F0EBE5;
@@ -11,8 +11,50 @@
 
 body {
   color: var(--foreground);
-  background: var(--background);
+  background: linear-gradient(135deg, #F7F5F6 0%, #EDE9E3 100%);
+  background-attachment: fixed;
   font-family: var(--font-open-runde), system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+/* Glass effect utility */
+@layer utilities {
+  .glass {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+  
+  .glass-dark {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+  }
+  
+  .gradient-text {
+    background: linear-gradient(135deg, #2562D1 0%, #5088F5 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  .gradient-btn {
+    background: linear-gradient(135deg, #2562D1 0%, #4B7BE5 100%);
+    transition: all 0.3s ease;
+  }
+  
+  .gradient-btn:hover {
+    background: linear-gradient(135deg, #1E4FAB 0%, #2562D1 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(37, 98, 209, 0.3);
+  }
+}
+
+/* Smooth transitions for all interactive elements */
+button, a, input, .transition-all {
+  transition: all 0.2s ease;
 }
 
 /* Custom scrollbar */
@@ -22,15 +64,25 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: rgba(241, 241, 241, 0.5);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: rgba(193, 193, 193, 0.6);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  background: rgba(161, 161, 161, 0.8);
+}
+
+/* Subtle animation for page load */
+main {
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
