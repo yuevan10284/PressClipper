@@ -236,6 +236,8 @@ export async function fetchCoverage(
 
         const nextParsed = new URL(nextLink)
         nextParsed.searchParams.set('api_key', SERPAPI_KEY)
+        // SerpApi forbids location + uule together; pagination next link may include uule
+        nextParsed.searchParams.delete('location')
         nextUrl = nextParsed.toString()
         pageCount++
       } catch (err) {
