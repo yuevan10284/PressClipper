@@ -162,25 +162,9 @@ function itemToArticle(
 }
 
 /**
- * Build SERP query from client alerts: 1 query → "query", 2+ → "q1" AND "q2" AND ...
- * Strips double quotes inside phrases to avoid breaking the search string.
- */
-function buildSerpQuery(alerts: CoveragePipelineInput[]): string {
-  const raw = alerts
-    .filter((a) => typeof a.query === 'string' && a.query.trim().length > 0)
-    .map((a) => a.query.trim().replace(/"/g, ''))
-  if (raw.length === 0) return ''
-  if (raw.length === 1) return `"${raw[0]}"`
-  return raw.map((q) => `"${q}"`).join(' AND ')
-}
-
-/**
  * Fetches coverage articles using SerpApi (serpapi.com).
- * All alerts for the client are combined into a single search with AND:
- * one query → "query", multiple → "query 1" AND "query 2" AND ...
- * Single GET to serpapi.com/search.json with q, tbs=qdr:d (past 24h);
- * paginates until no next page, organic_results empty, or max pages.
- * Maps to CoverageArticle and dedupes by link.
+ * One search per alert; each query is sent as-is (no added quotes or AND).
+ * Paginates per query; results are merged and deduped by link.
  */
 export async function fetchCoverage(
   _orgId: string,
@@ -193,71 +177,71 @@ export async function fetchCoverage(
     return []
   }
 
-  const q = buildSerpQuery(alertsWithQuery)
-  const relevanceQuery = alertsWithQuery.map((a) => a.query.trim()).join(' ')
-
-  console.log(`[Coverage] Searching for: ${q}`)
-
   const seenUrls = new Set<string>()
   const articles: CoverageArticle[] = []
 
-  const initialParams = new URLSearchParams({
-    engine: 'google',
-    q,
-    tbs: 'qdr:d',
-    hl: 'en',
-    gl: 'us',
-    google_domain: 'google.com',
-    api_key: SERPAPI_KEY,
-    location: DEFAULT_LOCATION
-  })
+  for (const alert of alertsWithQuery) {
+    const q = alert.query.trim()
+    console.log(`[Coverage] Searching for: ${q}`)
 
-  let nextUrl: string | null = `${SERPAPI_BASE}?${initialParams.toString()}`
-  let pageCount = 0
+    const initialParams = new URLSearchParams({
+      engine: 'google',
+      q,
+      tbs: 'qdr:d',
+      hl: 'en',
+      gl: 'us',
+      google_domain: 'google.com',
+      api_key: SERPAPI_KEY,
+      location: DEFAULT_LOCATION
+    })
 
-  while (nextUrl && pageCount < MAX_PAGES) {
-    try {
-      const res = await fetch(nextUrl)
+    let nextUrl: string | null = `${SERPAPI_BASE}?${initialParams.toString()}`
+    let pageCount = 0
 
-      if (!res.ok) {
-        const text = await res.text()
-        console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}): ${res.status} ${text}`)
-        throw new Error(`SerpApi error: ${res.status} ${text}`)
+    while (nextUrl && pageCount < MAX_PAGES) {
+      try {
+        const res = await fetch(nextUrl)
+
+        if (!res.ok) {
+          const text = await res.text()
+          console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}): ${res.status} ${text}`)
+          throw new Error(`SerpApi error: ${res.status} ${text}`)
+        }
+
+        const data: SerpApiResponse = await res.json()
+
+        if (data.error) {
+          console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}): ${data.error}`)
+          throw new Error(`SerpApi error: ${data.error}`)
+        }
+        if (data.search_metadata?.status === 'Error') {
+          const msg = data.error ?? 'Search failed'
+          throw new Error(`SerpApi error: ${msg}`)
+        }
+
+        const organic = data.organic_results ?? []
+        if (organic.length === 0) break
+
+        for (const item of organic) {
+          const link = item.link
+          if (!link || link.trim() === '' || seenUrls.has(link)) continue
+          seenUrls.add(link)
+          const position = item.position || (pageCount * 10 + organic.indexOf(item) + 1)
+          articles.push(itemToArticle(item, q, position))
+        }
+
+        const pagination = data.serpapi_pagination
+        const nextLink = pagination?.next ?? pagination?.next_link
+        if (!nextLink || !nextLink.trim()) break
+
+        const nextParsed = new URL(nextLink)
+        nextParsed.searchParams.set('api_key', SERPAPI_KEY)
+        nextUrl = nextParsed.toString()
+        pageCount++
+      } catch (err) {
+        console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}):`, err)
+        throw err
       }
-
-      const data: SerpApiResponse = await res.json()
-
-      if (data.error) {
-        console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}): ${data.error}`)
-        throw new Error(`SerpApi error: ${data.error}`)
-      }
-      if (data.search_metadata?.status === 'Error') {
-        const msg = data.error ?? 'Search failed'
-        throw new Error(`SerpApi error: ${msg}`)
-      }
-
-      const organic = data.organic_results ?? []
-      if (organic.length === 0) break
-
-      for (const item of organic) {
-        const link = item.link
-        if (!link || link.trim() === '' || seenUrls.has(link)) continue
-        seenUrls.add(link)
-        const globalPosition = item.position || (pageCount * 10 + organic.indexOf(item) + 1)
-        articles.push(itemToArticle(item, relevanceQuery, globalPosition))
-      }
-
-      const pagination = data.serpapi_pagination
-      const nextLink = pagination?.next ?? pagination?.next_link
-      if (!nextLink || !nextLink.trim()) break
-
-      const nextParsed = new URL(nextLink)
-      nextParsed.searchParams.set('api_key', SERPAPI_KEY)
-      nextUrl = nextParsed.toString()
-      pageCount++
-    } catch (err) {
-      console.error(`[Coverage] SerpApi error (q="${q}", page=${pageCount + 1}):`, err)
-      throw err
     }
   }
 
